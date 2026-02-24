@@ -32,11 +32,17 @@ func (n *Node) register() {
 			continue
 		}
 
+		// Determine the local IP dynamically or use an explicit one
+		localAddr := "localhost"
+		if outboundIP := getOutboundIP(); outboundIP != nil {
+			localAddr = outboundIP.String()
+		}
+
 		msg := protocol.Message{
 			Type:   "REGISTER",
 			Sender: n.ID,
 			Payload: map[string]string{
-				"address": "localhost:" + n.Port,
+				"address": localAddr + ":" + n.Port,
 			},
 		}
 
@@ -71,4 +77,15 @@ func (n *Node) sendHeartbeats() {
 		json.NewEncoder(conn).Encode(msg)
 		conn.Close()
 	}
+}
+
+// Helper to reliably find the local machine's IP address on the network
+func getOutboundIP() net.IP {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP
 }
