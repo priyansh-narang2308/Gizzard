@@ -24,19 +24,34 @@ func (n *Node) Start() {
 }
 
 func (n *Node) register() {
-	conn, _ := net.Dial("tcp", n.Master)
-	defer conn.Close()
+	for {
+		conn, err := net.Dial("tcp", n.Master)
+		if err != nil {
+			fmt.Printf("Failed to connect to master at %s: %v. Retrying in 5 seconds...\n", n.Master, err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
 
-	msg := protocol.Message{
-		Type:   "REGISTER",
-		Sender: n.ID,
-		Payload: map[string]string{
-			"address": "localhost:" + n.Port,
-		},
+		msg := protocol.Message{
+			Type:   "REGISTER",
+			Sender: n.ID,
+			Payload: map[string]string{
+				"address": "localhost:" + n.Port,
+			},
+		}
+
+		err = json.NewEncoder(conn).Encode(msg)
+		conn.Close()
+
+		if err != nil {
+			fmt.Printf("Failed to send register message: %v. Retrying in 5 seconds...\n", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		fmt.Println("Registered with master")
+		break
 	}
-
-	json.NewEncoder(conn).Encode(msg)
-	fmt.Println("Registered with master")
 }
 
 func (n *Node) sendHeartbeats() {
