@@ -2,19 +2,20 @@ package master
 
 import (
 	"encoding/json"
-	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"sort"
+	"strconv"
 )
 
 func (m *Master) StartHTTP(port string) {
 	http.HandleFunc("/", m.dashboard)
 	http.HandleFunc("/api", m.apiStatus)
 
-	fmt.Println("Dashboard running on port", port)
+	log.Printf("[DASHBOARD] Running on port %s\n", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		fmt.Printf("HTTP server failed: %v\n", err)
+		log.Printf("[ERROR] HTTP server failed: %v\n", err)
 	}
 }
 
@@ -158,7 +159,14 @@ func (m *Master) dashboard(w http.ResponseWriter, r *http.Request) {
 	for _, n := range m.Nodes {
 		nodes = append(nodes, NodeData{ID: n.ID, Address: n.Address, Status: n.Status})
 	}
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	sort.Slice(nodes, func(i, j int) bool {
+		id1, err1 := strconv.Atoi(nodes[i].ID)
+		id2, err2 := strconv.Atoi(nodes[j].ID)
+		if err1 == nil && err2 == nil {
+			return id1 < id2 // Numeric sort for "1", "2", "10"
+		}
+		return nodes[i].ID < nodes[j].ID // Fallback to string sort
+	})
 
 	var shards []ShardData
 	for _, s := range m.Shards {

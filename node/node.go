@@ -2,7 +2,7 @@ package node
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"net"
 	"time"
 
@@ -27,7 +27,7 @@ func (n *Node) register() {
 	for {
 		conn, err := net.Dial("tcp", n.Master)
 		if err != nil {
-			fmt.Printf("Failed to connect to master at %s: %v. Retrying in 5 seconds...\n", n.Master, err)
+			log.Printf("[NODE %s] Failed to connect to master at %s: %v. Retrying in 5s...\n", n.ID, n.Master, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -44,12 +44,12 @@ func (n *Node) register() {
 		conn.Close()
 
 		if err != nil {
-			fmt.Printf("Failed to send register message: %v. Retrying in 5 seconds...\n", err)
+			log.Printf("[NODE %s] Failed to send register message: %v. Retrying in 5s...\n", n.ID, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		fmt.Println("Registered with master")
+		log.Printf("[NODE %s] Successfully registered with master at %s\n", n.ID, n.Master)
 		break
 	}
 }

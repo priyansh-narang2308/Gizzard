@@ -2,9 +2,10 @@ package master
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"net"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,9 +29,9 @@ func NewMaster() *Master {
 func (m *Master) StartTCP(port string) {
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		panic(err)
+		log.Fatalf("[MASTER] Failed to start TCP listener on port %s: %v", port, err)
 	}
-	fmt.Println("Master listening on port", port)
+	log.Printf("[MASTER] Listening on TCP port %s\n", port)
 
 	go m.monitorFailures()
 
@@ -70,7 +71,7 @@ func (m *Master) registerNode(msg protocol.Message) {
 		Status:   "ALIVE",
 	}
 
-	fmt.Println("Node registered:", nodeID)
+	log.Printf("[EVENT] Node %s registered successfully (Address: %s)\n", nodeID, address)
 
 	m.assignShards()
 }
@@ -97,7 +98,14 @@ func (m *Master) assignShards() {
 	}
 
 	// Sort node IDs to make assignments deterministic
-	sort.Strings(aliveNodeIDs)
+	sort.Slice(aliveNodeIDs, func(i, j int) bool {
+		id1, err1 := strconv.Atoi(aliveNodeIDs[i])
+		id2, err2 := strconv.Atoi(aliveNodeIDs[j])
+		if err1 == nil && err2 == nil {
+			return id1 < id2
+		}
+		return aliveNodeIDs[i] < aliveNodeIDs[j]
+	})
 
 	// If no alive nodes exist, clear all leaders but keep shards existing
 	if len(aliveNodeIDs) == 0 {
@@ -130,13 +138,13 @@ func (m *Master) monitorFailures() {
 		for _, node := range m.Nodes {
 			if node.Status == "ALIVE" && time.Since(node.LastSeen) > 10*time.Second {
 				node.Status = "DEAD"
-				fmt.Println("Node marked DEAD:", node.ID)
+				log.Printf("[ALERT] Node %s missed heartbeats. Marked as DEAD.\n", node.ID)
 				failureDetected = true
 			}
 		}
 
 		if failureDetected {
-			fmt.Println("Cluster state changed. Rebalancing shards...")
+			log.Println("[INFO] Cluster state changed. Rebalancing shards deterministically...")
 			m.assignShards()
 		}
 		m.Mu.Unlock()
