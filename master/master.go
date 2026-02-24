@@ -27,7 +27,7 @@ func NewMaster() *Master {
 }
 
 func (m *Master) StartTCP(port string) {
-	listener, err := net.Listen("tcp", ":"+port)
+	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
 		log.Fatalf("[MASTER] Failed to start TCP listener on port %s: %v", port, err)
 	}

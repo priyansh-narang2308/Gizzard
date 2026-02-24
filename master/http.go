@@ -14,7 +14,7 @@ func (m *Master) StartHTTP(port string) {
 	http.HandleFunc("/api", m.apiStatus)
 
 	log.Printf("[DASHBOARD] Running on port %s\n", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := http.ListenAndServe("0.0.0.0:"+port, nil); err != nil {
 		log.Printf("[ERROR] HTTP server failed: %v\n", err)
 	}
 }
