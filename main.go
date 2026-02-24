@@ -12,6 +12,7 @@ func main() {
 	role := flag.String("role", "", "master or node")
 	id := flag.String("id", "", "node id")
 	port := flag.String("port", "", "port")
+	httpPort := flag.String("http", "8081", "http port for master dashboard")
 	masterAddr := flag.String("master", "", "master address")
 
 	flag.Parse()
@@ -19,7 +20,7 @@ func main() {
 	if *role == "master" {
 		m := master.NewMaster()
 		go m.StartTCP(*port)
-		m.StartHTTP("8080")
+		m.StartHTTP(*httpPort)
 	}
 
 	if *role == "node" {
