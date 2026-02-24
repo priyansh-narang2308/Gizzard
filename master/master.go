@@ -1,9 +1,10 @@
-package master	
+package master
 
 import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -86,18 +87,32 @@ func (m *Master) updateHeartbeat(msg protocol.Message) {
 
 func (m *Master) assignShards() {
 	totalShards := 8
-	nodeIDs := []string{}
+	var aliveNodeIDs []string
 
-	for id := range m.Nodes {
-		nodeIDs = append(nodeIDs, id)
+	// Only collect ALIVE nodes
+	for id, node := range m.Nodes {
+		if node.Status == "ALIVE" {
+			aliveNodeIDs = append(aliveNodeIDs, id)
+		}
 	}
 
-	if len(nodeIDs) == 0 {
+	// Sort node IDs to make assignments deterministic
+	sort.Strings(aliveNodeIDs)
+
+	// If no alive nodes exist, clear all leaders but keep shards existing
+	if len(aliveNodeIDs) == 0 {
+		for i := 0; i < totalShards; i++ {
+			if _, exists := m.Shards[i]; !exists {
+				m.Shards[i] = &model.Shard{ID: i}
+			}
+			m.Shards[i].Leader = "NONE"
+		}
 		return
 	}
 
+	// Deterministically assign shards to ALIVE nodes in round-robin fashion
 	for i := 0; i < totalShards; i++ {
-		leader := nodeIDs[i%len(nodeIDs)]
+		leader := aliveNodeIDs[i%len(aliveNodeIDs)]
 		m.Shards[i] = &model.Shard{
 			ID:     i,
 			Leader: leader,
@@ -109,12 +124,20 @@ func (m *Master) monitorFailures() {
 	for {
 		time.Sleep(5 * time.Second)
 
+		failureDetected := false
+
 		m.Mu.Lock()
 		for _, node := range m.Nodes {
-			if time.Since(node.LastSeen) > 10*time.Second {
+			if node.Status == "ALIVE" && time.Since(node.LastSeen) > 10*time.Second {
 				node.Status = "DEAD"
 				fmt.Println("Node marked DEAD:", node.ID)
+				failureDetected = true
 			}
+		}
+
+		if failureDetected {
+			fmt.Println("Cluster state changed. Rebalancing shards...")
+			m.assignShards()
 		}
 		m.Mu.Unlock()
 	}
