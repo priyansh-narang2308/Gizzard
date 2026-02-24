@@ -11,7 +11,9 @@ func (m *Master) StartHTTP(port string) {
 	http.HandleFunc("/api", m.apiStatus)
 
 	fmt.Println("Dashboard running on port", port)
-	http.ListenAndServe(":"+port, nil)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		fmt.Printf("HTTP server failed: %v\n", err)
+	}
 }
 
 func (m *Master) dashboard(w http.ResponseWriter, r *http.Request) {
