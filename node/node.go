@@ -81,11 +81,26 @@ func (n *Node) sendHeartbeats() {
 
 // Helper to reliably find the local machine's IP address on the network
 func getOutboundIP() net.IP {
+	// Try establishing a dummy UDP connection to Google DNS (doesn't actually send packets)
+	// This is the cleanest way to get the preferred outbound IP.
 	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return nil
+	if err == nil {
+		defer conn.Close()
+		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		return localAddr.IP
 	}
-	defer conn.Close()
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP
+
+	// Fallback for Windows/Strict Firewalls: iterate over network interfaces
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, address := range addrs {
+			// Check the address type and if it is not a loopback then return it
+			if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+				if ipnet.IP.To4() != nil {
+					return ipnet.IP
+				}
+			}
+		}
+	}
+	return nil
 }
