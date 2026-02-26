@@ -135,20 +135,25 @@ func (m *Master) assignShards() {
 	// If no alive nodes exist, clear all leaders but keep shards existing
 	if len(aliveNodeIDs) == 0 {
 		for i := 0; i < totalShards; i++ {
-			if _, exists := m.Shards[i]; !exists {
-				m.Shards[i] = &model.Shard{ID: i}
+			if shard, exists := m.Shards[i]; exists {
+				shard.Leader = "NONE"
+			} else {
+				m.Shards[i] = &model.Shard{ID: i, Leader: "NONE"}
 			}
-			m.Shards[i].Leader = "NONE"
 		}
 		return
 	}
 
 	// Deterministically assign shards to ALIVE nodes in round-robin fashion
-	for i := range totalShards {
+	for i := 0; i < totalShards; i++ {
 		leader := aliveNodeIDs[i%len(aliveNodeIDs)]
-		m.Shards[i] = &model.Shard{
-			ID:     i,
-			Leader: leader,
+		if shard, exists := m.Shards[i]; exists {
+			shard.Leader = leader
+		} else {
+			m.Shards[i] = &model.Shard{
+				ID:     i,
+				Leader: leader,
+			}
 		}
 	}
 }
