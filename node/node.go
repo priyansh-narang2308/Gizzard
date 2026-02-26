@@ -2,7 +2,6 @@ package node
 
 import (
 	"encoding/json"
-	"hash/fnv"
 	"log"
 	"net"
 	"strconv"
@@ -74,11 +73,8 @@ func (n *Node) handlePut(msg protocol.Message, conn net.Conn) {
 	key := msg.Payload["key"]
 	val := msg.Payload["value"]
 
-	totalShards := 8
-
-	h := fnv.New32a()
-	h.Write([]byte(key))
-	shardID := int(h.Sum32() % uint32(totalShards))
+	// PHASE 4: Deterministic Hashing
+	shardID := protocol.GetShardID(key)
 	shardStr := strconv.Itoa(shardID)
 
 	n.Mu.RLock()
@@ -126,7 +122,7 @@ func (n *Node) handlePut(msg protocol.Message, conn net.Conn) {
 	n.Data[shardID][key] = val
 	n.Mu.Unlock()
 
-	log.Printf("[DATA] Stored Key: %s, Val: %s in Shard: %d\n", key, val, shardID)
+	log.Printf("[DATA] Key: %s -> Shard: %d (Stored on Node %s)\n", key, shardID, n.ID)
 
 	json.NewEncoder(conn).Encode(map[string]string{
 		"status":  "ok",
@@ -137,11 +133,8 @@ func (n *Node) handlePut(msg protocol.Message, conn net.Conn) {
 func (n *Node) handleGet(msg protocol.Message, conn net.Conn) {
 	key := msg.Payload["key"]
 
-	totalShards := 8
-
-	h := fnv.New32a()
-	h.Write([]byte(key))
-	shardID := int(h.Sum32() % uint32(totalShards))
+	// PHASE 4: Deterministic Hashing
+	shardID := protocol.GetShardID(key)
 	shardStr := strconv.Itoa(shardID)
 
 	n.Mu.RLock()

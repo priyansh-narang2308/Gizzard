@@ -112,7 +112,6 @@ func (m *Master) updateHeartbeat(msg protocol.Message) {
 }
 
 func (m *Master) assignShards() {
-	totalShards := 8
 	var aliveNodeIDs []string
 
 	// Only collect ALIVE nodes
@@ -134,7 +133,7 @@ func (m *Master) assignShards() {
 
 	// If no alive nodes exist, clear all leaders but keep shards existing
 	if len(aliveNodeIDs) == 0 {
-		for i := 0; i < totalShards; i++ {
+		for i := 0; i < protocol.TotalShards; i++ {
 			if shard, exists := m.Shards[i]; exists {
 				shard.Leader = "NONE"
 			} else {
@@ -145,7 +144,7 @@ func (m *Master) assignShards() {
 	}
 
 	// Deterministically assign shards to ALIVE nodes in round-robin fashion
-	for i := 0; i < totalShards; i++ {
+	for i := range protocol.TotalShards {
 		leader := aliveNodeIDs[i%len(aliveNodeIDs)]
 		if shard, exists := m.Shards[i]; exists {
 			shard.Leader = leader
