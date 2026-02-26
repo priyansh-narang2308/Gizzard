@@ -59,6 +59,9 @@ func (n *Node) handleRequest(conn net.Conn) {
 	case "PUT":
 		n.handlePut(msg, conn)
 		return
+	case "GET":
+		n.handleGet(msg, conn)
+		return
 	default:
 		response["status"] = "error"
 		response["message"] = "Unknown command"
@@ -128,6 +131,78 @@ func (n *Node) handlePut(msg protocol.Message, conn net.Conn) {
 	json.NewEncoder(conn).Encode(map[string]string{
 		"status":  "ok",
 		"message": "Data stored successfully",
+	})
+}
+
+func (n *Node) handleGet(msg protocol.Message, conn net.Conn) {
+	key := msg.Payload["key"]
+
+	totalShards := 8
+
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	shardID := int(h.Sum32() % uint32(totalShards))
+	shardStr := strconv.Itoa(shardID)
+
+	n.Mu.RLock()
+	ownerAddr := n.Routing[shardStr]
+	localAddr := "localhost"
+	if outboundIP := getOutboundIP(); outboundIP != nil {
+		localAddr = outboundIP.String()
+	}
+	ownAddr := localAddr + ":" + n.Port
+	n.Mu.RUnlock()
+
+	if ownerAddr == "" {
+		json.NewEncoder(conn).Encode(map[string]string{
+			"status":  "error",
+			"message": "Shard owner not found",
+		})
+		return
+	}
+
+	if ownerAddr != ownAddr {
+		log.Printf("[NODE %s] Forwarding GET for key %s (Shard %d) to %s\n", n.ID, key, shardID, ownerAddr)
+
+		fwdConn, err := net.Dial("tcp", ownerAddr)
+		if err != nil {
+			json.NewEncoder(conn).Encode(map[string]string{
+				"status":  "error",
+				"message": "Failed to forward request",
+			})
+			return
+		}
+		defer fwdConn.Close()
+
+		json.NewEncoder(fwdConn).Encode(msg)
+
+		var fwdResp map[string]interface{}
+		json.NewDecoder(fwdConn).Decode(&fwdResp)
+		json.NewEncoder(conn).Encode(fwdResp)
+		return
+	}
+
+	n.Mu.RLock()
+	var val string
+	var exists bool
+	if shardData, ok := n.Data[shardID]; ok {
+		val, exists = shardData[key]
+	}
+	n.Mu.RUnlock()
+
+	if !exists {
+		json.NewEncoder(conn).Encode(map[string]string{
+			"status":  "error",
+			"message": "Key not found",
+		})
+		return
+	}
+
+	log.Printf("[DATA] Retrieved Key: %s, Val: %s from Shard: %d\n", key, val, shardID)
+
+	json.NewEncoder(conn).Encode(map[string]string{
+		"status": "ok",
+		"value":  val,
 	})
 }
 
