@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/json"
+	"hash/fnv"
 	"log"
 	"net"
 	"strconv"
@@ -12,15 +13,17 @@ import (
 )
 
 type Node struct {
-	ID     string
-	Master string
-	Port   string
-	Data   map[int]map[string]string
-	Mu     sync.RWMutex
+	ID      string
+	Master  string
+	Port    string
+	Data    map[int]map[string]string
+	Mu      sync.RWMutex
+	Routing map[string]string
 }
 
 func (n *Node) Start() {
 	n.Data = make(map[int]map[string]string)
+	n.Routing = make(map[string]string)
 
 	n.register()
 
@@ -54,8 +57,8 @@ func (n *Node) handleRequest(conn net.Conn) {
 	response := map[string]string{"status": "ok"}
 	switch msg.Type {
 	case "PUT":
-		n.handlePut(msg)
-		response["message"] = "Data stored successfully"
+		n.handlePut(msg, conn)
+		return
 	default:
 		response["status"] = "error"
 		response["message"] = "Unknown command"
@@ -64,10 +67,54 @@ func (n *Node) handleRequest(conn net.Conn) {
 	json.NewEncoder(conn).Encode(response)
 }
 
-func (n *Node) handlePut(msg protocol.Message) {
-	shardID, _ := strconv.Atoi(msg.Payload["shard"])
+func (n *Node) handlePut(msg protocol.Message, conn net.Conn) {
 	key := msg.Payload["key"]
 	val := msg.Payload["value"]
+
+	totalShards := 8
+
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	shardID := int(h.Sum32() % uint32(totalShards))
+	shardStr := strconv.Itoa(shardID)
+
+	n.Mu.RLock()
+	ownerAddr := n.Routing[shardStr]
+	localAddr := "localhost"
+	if outboundIP := getOutboundIP(); outboundIP != nil {
+		localAddr = outboundIP.String()
+	}
+	ownAddr := localAddr + ":" + n.Port
+	n.Mu.RUnlock()
+
+	if ownerAddr == "" {
+		json.NewEncoder(conn).Encode(map[string]string{
+			"status":  "error",
+			"message": "Shard owner not found",
+		})
+		return
+	}
+
+	if ownerAddr != ownAddr {
+		log.Printf("[NODE %s] Forwarding PUT for key %s (Shard %d) to %s\n", n.ID, key, shardID, ownerAddr)
+
+		fwdConn, err := net.Dial("tcp", ownerAddr)
+		if err != nil {
+			json.NewEncoder(conn).Encode(map[string]string{
+				"status":  "error",
+				"message": "Failed to forward request",
+			})
+			return
+		}
+		defer fwdConn.Close()
+
+		json.NewEncoder(fwdConn).Encode(msg)
+
+		var fwdResp map[string]interface{}
+		json.NewDecoder(fwdConn).Decode(&fwdResp)
+		json.NewEncoder(conn).Encode(fwdResp)
+		return
+	}
 
 	n.Mu.Lock()
 	if _, exists := n.Data[shardID]; !exists {
@@ -77,6 +124,11 @@ func (n *Node) handlePut(msg protocol.Message) {
 	n.Mu.Unlock()
 
 	log.Printf("[DATA] Stored Key: %s, Val: %s in Shard: %d\n", key, val, shardID)
+
+	json.NewEncoder(conn).Encode(map[string]string{
+		"status":  "ok",
+		"message": "Data stored successfully",
+	})
 }
 
 func (n *Node) register() {
@@ -139,6 +191,14 @@ func (n *Node) sendHeartbeats() {
 		}
 
 		json.NewEncoder(conn).Encode(msg)
+
+		var resp protocol.Message
+		if err := json.NewDecoder(conn).Decode(&resp); err == nil && resp.Type == "ROUTING" {
+			n.Mu.Lock()
+			n.Routing = resp.Payload
+			n.Mu.Unlock()
+		}
+
 		conn.Close()
 	}
 }

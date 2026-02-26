@@ -54,6 +54,22 @@ func (m *Master) handleConnection(conn net.Conn) {
 
 	case "HEARTBEAT":
 		m.updateHeartbeat(msg)
+
+		m.Mu.Lock()
+		shards := make(map[string]string)
+		for _, s := range m.Shards {
+			if s.Leader != "NONE" && s.Leader != "" {
+				if nodeInfo, ok := m.Nodes[s.Leader]; ok {
+					shards[strconv.Itoa(s.ID)] = nodeInfo.Address
+				}
+			}
+		}
+		m.Mu.Unlock()
+
+		json.NewEncoder(conn).Encode(protocol.Message{
+			Type:    "ROUTING",
+			Payload: shards,
+		})
 	}
 }
 
