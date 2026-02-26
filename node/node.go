@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/priyansh-narang2308/gizzard/protocol"
@@ -13,14 +15,68 @@ type Node struct {
 	ID     string
 	Master string
 	Port   string
+	Data   map[int]map[string]string
+	Mu     sync.RWMutex
 }
 
 func (n *Node) Start() {
+	n.Data = make(map[int]map[string]string)
+
 	n.register()
 
 	go n.sendHeartbeats()
 
-	select {}
+	// Start listening for data requests (PUT/GET)
+	listener, err := net.Listen("tcp", "0.0.0.0:"+n.Port)
+	if err != nil {
+		log.Fatalf("[NODE %s] Failed to start listener on port %s: %v", n.ID, n.Port, err)
+	}
+	log.Printf("[NODE %s] Listening for data requests on port %s\n", n.ID, n.Port)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("[NODE %s] Accept error: %v\n", n.ID, err)
+			continue
+		}
+		go n.handleRequest(conn)
+	}
+}
+
+func (n *Node) handleRequest(conn net.Conn) {
+	defer conn.Close()
+
+	var msg protocol.Message
+	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
+		return
+	}
+
+	response := map[string]string{"status": "ok"}
+	switch msg.Type {
+	case "PUT":
+		n.handlePut(msg)
+		response["message"] = "Data stored successfully"
+	default:
+		response["status"] = "error"
+		response["message"] = "Unknown command"
+	}
+
+	json.NewEncoder(conn).Encode(response)
+}
+
+func (n *Node) handlePut(msg protocol.Message) {
+	shardID, _ := strconv.Atoi(msg.Payload["shard"])
+	key := msg.Payload["key"]
+	val := msg.Payload["value"]
+
+	n.Mu.Lock()
+	if _, exists := n.Data[shardID]; !exists {
+		n.Data[shardID] = make(map[string]string)
+	}
+	n.Data[shardID][key] = val
+	n.Mu.Unlock()
+
+	log.Printf("[DATA] Stored Key: %s, Val: %s in Shard: %d\n", key, val, shardID)
 }
 
 func (n *Node) register() {
@@ -69,9 +125,17 @@ func (n *Node) sendHeartbeats() {
 			continue
 		}
 
+		n.Mu.RLock()
+		stats := make(map[string]string)
+		for shardID, items := range n.Data {
+			stats[strconv.Itoa(shardID)] = strconv.Itoa(len(items))
+		}
+		n.Mu.RUnlock()
+
 		msg := protocol.Message{
-			Type:   "HEARTBEAT",
-			Sender: n.ID,
+			Type:    "HEARTBEAT",
+			Sender:  n.ID,
+			Payload: stats,
 		}
 
 		json.NewEncoder(conn).Encode(msg)

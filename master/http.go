@@ -1,25 +1,115 @@
 package master
 
 import (
-	"encoding/json"
-	"html/template"
-	"log"
-	"net/http"
-	"sort"
-	"strconv"
+    "encoding/json"
+    "log"
+    "net"
+    "net/http"
+    "strconv"
+    "text/template"
 )
 
 func (m *Master) StartHTTP(port string) {
 	http.HandleFunc("/", m.dashboard)
 	http.HandleFunc("/api", m.apiStatus)
-
+	http.HandleFunc("/data", m.dataHandler)
 	log.Printf("[DASHBOARD] Running on port %s\n", port)
 	if err := http.ListenAndServe("0.0.0.0:"+port, nil); err != nil {
 		log.Printf("[ERROR] HTTP server failed: %v\n", err)
 	}
 }
 
-const dashboardHTML = `
+// Handles POST requests for data operations (PUT)
+func (m *Master) dataHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Type    string            `json:"type"`
+		Payload map[string]string `json:"payload"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Type != "PUT" {
+		http.Error(w, "Unsupported operation", http.StatusBadRequest)
+		return
+	}
+	shardID := req.Payload["shard"]
+	key := req.Payload["key"]
+	value := req.Payload["value"]
+	// Find leader node for shard
+	m.Mu.Lock()
+	var leaderAddr string
+	for _, s := range m.Shards {
+		if strconv.Itoa(s.ID) == shardID {
+			leaderAddr = s.Leader
+			break
+		}
+	}
+	m.Mu.Unlock()
+	if leaderAddr == "" {
+		http.Error(w, "Shard leader not found", http.StatusNotFound)
+		return
+	}
+	// Forward PUT to leader node
+	nodeConn, err := net.Dial("tcp", leaderAddr)
+	if err != nil {
+		http.Error(w, "Failed to connect to node", http.StatusBadGateway)
+		return
+	}
+	defer nodeConn.Close()
+	msg := map[string]interface{}{
+		"type": "PUT",
+		"payload": map[string]string{
+			"shard": shardID,
+			"key":   key,
+			"value": value,
+		},
+	}
+	if err := json.NewEncoder(nodeConn).Encode(msg); err != nil {
+		http.Error(w, "Failed to send to node", http.StatusInternalServerError)
+		return
+	}
+	var nodeResp map[string]interface{}
+	if err := json.NewDecoder(nodeConn).Decode(&nodeResp); err != nil {
+		http.Error(w, "Failed to read node response", http.StatusInternalServerError)
+		return
+	}
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(nodeResp)
+    }
+    
+    // Handles GET requests for the dashboard
+    func (m *Master) dashboard(w http.ResponseWriter, r *http.Request) {
+        m.Mu.Lock()
+        defer m.Mu.Unlock()
+        
+        tmpl, err := template.New("dashboard").Parse(dashboardHTML)
+        if err != nil {
+            http.Error(w, "Failed to parse template", http.StatusInternalServerError)
+            return
+        }
+        
+        w.Header().Set("Content-Type", "text/html")
+        tmpl.Execute(w, m)
+    }
+    
+    // Handles API status requests
+    func (m *Master) apiStatus(w http.ResponseWriter, r *http.Request) {
+        m.Mu.Lock()
+        defer m.Mu.Unlock()
+        
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(map[string]interface{}{
+            "nodes":  m.Nodes,
+            "shards": m.Shards,
+        })
+    }
+    
+    const dashboardHTML = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -121,7 +211,7 @@ const dashboardHTML = `
             <ul>
                 {{range .Shards}}
                 <li>
-                    <span><strong>Shard {{.ID}}</strong></span>
+                    <span><strong>Shard {{.ID}}</strong> <br><small style="color:#666;">Keys stored: {{.Keys}}</small></span>
                     <span>Leader: <span class="leader">{{.Leader}}</span></span>
                 </li>
                 {{end}}
@@ -133,59 +223,5 @@ const dashboardHTML = `
     </div>
 </body>
 </html>
-`
+    `
 
-func (m *Master) dashboard(w http.ResponseWriter, r *http.Request) {
-	tmpl, err := template.New("dashboard").Parse(dashboardHTML)
-	if err != nil {
-		http.Error(w, "Error rendering dashboard", http.StatusInternalServerError)
-		return
-	}
-
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	type NodeData struct {
-		ID      string
-		Address string
-		Status  string
-	}
-	type ShardData struct {
-		ID     int
-		Leader string
-	}
-
-	var nodes []NodeData
-	for _, n := range m.Nodes {
-		nodes = append(nodes, NodeData{ID: n.ID, Address: n.Address, Status: n.Status})
-	}
-	sort.Slice(nodes, func(i, j int) bool {
-		id1, err1 := strconv.Atoi(nodes[i].ID)
-		id2, err2 := strconv.Atoi(nodes[j].ID)
-		if err1 == nil && err2 == nil {
-			return id1 < id2 // Numeric sort for "1", "2", "10"
-		}
-		return nodes[i].ID < nodes[j].ID // Fallback to string sort
-	})
-
-	var shards []ShardData
-	for _, s := range m.Shards {
-		shards = append(shards, ShardData{ID: s.ID, Leader: s.Leader})
-	}
-	sort.Slice(shards, func(i, j int) bool { return shards[i].ID < shards[j].ID })
-
-	data := struct {
-		Nodes  []NodeData
-		Shards []ShardData
-	}{
-		Nodes:  nodes,
-		Shards: shards,
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.Execute(w, data)
-}
-
-func (m *Master) apiStatus(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(m)
-}

@@ -12,4 +12,5 @@ type NodeInfo struct {
 type Shard struct {
 	ID     int
 	Leader string
+	Keys   int
 }

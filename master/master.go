@@ -83,6 +83,15 @@ func (m *Master) updateHeartbeat(msg protocol.Message) {
 	if node, ok := m.Nodes[msg.Sender]; ok {
 		node.LastSeen = time.Now()
 		node.Status = "ALIVE"
+
+		// Update shard key counts reported by the node
+		for shardIDStr, keyCountStr := range msg.Payload {
+			shardID, _ := strconv.Atoi(shardIDStr)
+			keyCount, _ := strconv.Atoi(keyCountStr)
+			if shard, exists := m.Shards[shardID]; exists && shard.Leader == msg.Sender {
+				shard.Keys = keyCount
+			}
+		}
 	}
 }
 
@@ -119,7 +128,7 @@ func (m *Master) assignShards() {
 	}
 
 	// Deterministically assign shards to ALIVE nodes in round-robin fashion
-	for i := 0; i < totalShards; i++ {
+	for i := range totalShards {
 		leader := aliveNodeIDs[i%len(aliveNodeIDs)]
 		m.Shards[i] = &model.Shard{
 			ID:     i,
