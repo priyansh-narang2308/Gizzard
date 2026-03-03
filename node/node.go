@@ -238,7 +238,7 @@ func (n *Node) register() {
 
 func (n *Node) sendHeartbeats() {
 	for {
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 
 		conn, err := net.Dial("tcp", n.Master)
 		if err != nil {

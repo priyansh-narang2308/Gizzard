@@ -159,13 +159,13 @@ func (m *Master) assignShards() {
 
 func (m *Master) monitorFailures() {
 	for {
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 
 		failureDetected := false
 
 		m.Mu.Lock()
 		for _, node := range m.Nodes {
-			if node.Status == "ALIVE" && time.Since(node.LastSeen) > 10*time.Second {
+			if node.Status == "ALIVE" && time.Since(node.LastSeen) > 5*time.Second {
 				node.Status = "DEAD"
 				log.Printf("[ALERT] Node %s missed heartbeats. Marked as DEAD.\n", node.ID)
 				failureDetected = true
